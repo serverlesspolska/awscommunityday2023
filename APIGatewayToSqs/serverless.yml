@@ -5,7 +5,8 @@ frameworkVersion: '>=3.19.0'
 plugins:
   - serverless-iam-roles-per-function
   - serverless-export-env
-
+  - serverless-apigateway-service-proxy
+ 
 provider:
   name: aws
   stage: ${opt:stage, file(./config/stage.js):userStage}
@@ -23,6 +24,10 @@ provider:
   tags:
     Application: ${self:service}
     Stage: ${self:provider.stage}
+  endpointType: REGIONAL
+  logs:
+    restApi:
+      level: INFO
 
 configValidationMode: warn
 
@@ -34,6 +39,12 @@ custom:
   export-env: # serverless-export-env config
     filename: .awsenv # custom filename to avoid conflict with Serverless Framework '.env' auto loading feature
     overwrite: true
+  apiGatewayServiceProxies:
+    - sqs:
+        path: /functionless
+        method: post
+        queueName: !GetAtt SqsQueueFunctionless.QueueName
+        cors: true
 
 functions:
   message:
@@ -73,3 +84,33 @@ resources:
       Type: AWS::SQS::Queue
       DeletionPolicy: Delete
       UpdateReplacePolicy: Delete
+      Properties:
+        MessageRetentionPeriod: 60
+    
+    SqsQueueFunctionless:
+      Type: AWS::SQS::Queue
+      DeletionPolicy: Delete
+      UpdateReplacePolicy: Delete
+      Properties:
+        MessageRetentionPeriod: 60
+
+
+    ## https://github.com/serverlesspolska/universal-www-form-urlencoded/tree/main/ApiGwLogginConfig
+    ApiGwAccountConfig:
+      Type: "AWS::ApiGateway::Account"
+      Properties:
+        CloudWatchRoleArn: !GetAtt "ApiGatewayLoggingRole.Arn"
+    ApiGatewayLoggingRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - "apigateway.amazonaws.com"
+              Action: "sts:AssumeRole"
+        Path: "/"
+        ManagedPolicyArns:
+          - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
