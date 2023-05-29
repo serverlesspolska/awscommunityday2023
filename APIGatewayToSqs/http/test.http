@@ -4,6 +4,16 @@
 @stage = dev-pawel
 
 #### Functionless: correct request
+POST https://z7vt3qux27.execute-api.eu-north-1.amazonaws.com/message
+Content-Type: application/json
+
+{
+  "a": 48,
+  "b": 84,
+  "text": "Serverless is AWSome"
+}
+
+#### Functionless: correct request
 POST {{host}}/{{stage}}/functionless
 Content-Type: application/json
 
