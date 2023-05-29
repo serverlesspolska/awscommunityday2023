@@ -1,0 +1,23 @@
+# To use this file you need REST Client VS Code extension.
+
+@host = https://maae1hs5sg.execute-api.eu-north-1.amazonaws.com
+@stage = dev-pawel
+
+#### LAMBDA: correct request
+POST {{host}}/{{stage}}/functionless
+Content-Type: application/json
+
+{
+  "a": 10,
+  "b": 20,
+  "text": "Functionless is COOL!"
+}
+
+#### LAMBDA: wrong request
+POST {{host}}/{{stage}}/functionless
+Content-Type: application/json
+
+{
+  "b": 20,
+  "text": "Bad request - results in 400"
+}

@@ -1,0 +1,153 @@
+service: APIGatewayToSqs
+
+frameworkVersion: '>=3.19.0'
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-export-env
+  - serverless-apigateway-service-proxy
+ 
+provider:
+  name: aws
+  stage: ${opt:stage, file(./config/stage.js):userStage}
+  runtime: nodejs16.x
+  profile: ${self:custom.deployment.profile.${self:custom.globalStage}}
+  region: ${self:custom.deployment.region.${self:custom.globalStage}}
+  logRetentionInDays: 60 # how long logs are kept in CloudWatch
+  environment:
+    # required Environment Variables. Don't remove.
+    stage: ${self:provider.stage}
+    region: ${self:provider.region}
+    service: ${self:service}
+    # your variables - optional
+    httpApiGatewayEndpointId: !Ref HttpApi
+  tags:
+    Application: ${self:service}
+    Stage: ${self:provider.stage}
+  endpointType: REGIONAL
+  logs:
+    restApi:
+      level: INFO
+
+configValidationMode: warn
+
+custom:
+  deployment: ${file(config/deployment.yml):deployment}
+  globalStage: ${self:custom.deployment.globalStages.${self:provider.stage}, 'dev'}
+  description: Simple Lambda that send message to SQS
+  tableName: ${self:service}-${self:provider.stage}
+  export-env: # serverless-export-env config
+    filename: .awsenv # custom filename to avoid conflict with Serverless Framework '.env' auto loading feature
+    overwrite: true
+  apiGatewayServiceProxies:
+    - sqs:
+        path: /functionless
+        method: post
+        queueName: !GetAtt SqsQueueFunctionless.QueueName
+        cors: true
+        response:
+          template:
+            # `success` is used when the integration response is 200
+            success: |-
+              { "message": "accepted" }
+            # `clientError` is used when the integration response is 400
+            clientError: |-
+              { "message": "there is an error in your request" }
+            # `serverError` is used when the integration response is 500
+            serverError: |-
+              { "message": "there was an error handling your request" }
+
+functions:
+  message:
+    handler: src/message/function.handler
+    description: Send message to SQS
+    memorySize: 512
+    timeout: 1
+    environment:
+      queueUrl: !Ref SqsQueue
+    events:
+      - httpApi:
+          method: POST
+          path: /message
+    iamRoleStatements:
+      - Sid: SendMessage
+        Effect: Allow
+        Action:
+          - sqs:SendMessage
+        Resource:
+          - !GetAtt SqsQueue.Arn
+
+package:
+  patterns:
+    # include
+    - src/**
+    # exclude
+    - '!*'
+    - '!__tests__/**'
+    - '!documentation/**'
+    - '!config/**'
+
+resources:
+  Description: ${self:custom.description}
+
+  Resources:
+    SqsQueue:
+      Type: AWS::SQS::Queue
+      DeletionPolicy: Delete
+      UpdateReplacePolicy: Delete
+      Properties:
+        MessageRetentionPeriod: 60
+    
+    SqsQueueFunctionless:
+      Type: AWS::SQS::Queue
+      DeletionPolicy: Delete
+      UpdateReplacePolicy: Delete
+      Properties:
+        MessageRetentionPeriod: 60
+
+
+    ## https://github.com/serverlesspolska/universal-www-form-urlencoded/tree/main/ApiGwLogginConfig
+    ApiGwAccountConfig:
+      Type: "AWS::ApiGateway::Account"
+      Properties:
+        CloudWatchRoleArn: !GetAtt "ApiGatewayLoggingRole.Arn"
+    ApiGatewayLoggingRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - "apigateway.amazonaws.com"
+              Action: "sts:AssumeRole"
+        Path: "/"
+        ManagedPolicyArns:
+          - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+
+
+
+    ## https://github.com/serverless-operations/serverless-apigateway-service-proxy/issues/125#issuecomment-792358521
+    ApiGatewayRestMethodModel:
+      Type: AWS::ApiGateway::Model
+      Properties:
+        ContentType: application/json
+        Description: "Intake Request Model"
+        RestApiId: { Ref: 'ApiGatewayRestApi' }
+        Schema: ${file(src/schema.json)}
+    ApiGatewayRequestValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: IntakeValidator
+        RestApiId: { Ref: 'ApiGatewayRestApi' }
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    
+    ## This updates the APIGateway Resource/Method that is defined above (POST /functionless)
+    ApiGatewayMethodFunctionlessPost:
+      Type: AWS::ApiGateway::Method
+      Properties:
+        RequestModels:
+          application/json: { Ref: 'ApiGatewayRestMethodModel' }
+        RequestValidatorId: { Ref: 'ApiGatewayRequestValidator' }
