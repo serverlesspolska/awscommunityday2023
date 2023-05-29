@@ -41,6 +41,31 @@ custom:
     overwrite: true
   apiGatewayServiceProxies:
     - sqs:
+        path: /urlencoded
+        method: post
+        queueName: !GetAtt SqsQueueFunctionlessUrlencoded.QueueName
+        cors: true
+        requestParameters:
+          'integration.request.header.Content-Type': "'application/x-www-form-urlencoded'"
+        request:
+          template:
+            application/x-www-form-urlencoded: |
+              #if($context.httpMethod=="POST")#set($requestBody=$input.path('$'))#else#set($requestBody="")#end#set($keyValuePairs=$requestBody.split("&"))#set($params=[])#foreach($kvp in $keyValuePairs)#set($operands=$kvp.split("="))#if($operands.size()==1||$operands.size()==2)#set($success=$params.add($operands))#end#end
+              #set($rawJSON="{#foreach($param in $params)#set($key=$util.urlDecode($param[0]))#if($param.size()>1)#set($value=$util.urlDecode($param[1]))#else#set($value="""")#end""$key"":""$value""#if($foreach.hasNext),#end#end}")
+              #set($fullBodyAsQueryParameter=$util.urlEncode($rawJSON))
+              Action=SendMessage&MessageBody=$fullBodyAsQueryParameter
+        response:
+          template:
+            # `success` is used when the integration response is 200
+            success: |-
+              { "message": "accepted" }
+            # `clientError` is used when the integration response is 400
+            clientError: |-
+              { "message": "there is an error in your request" }
+            # `serverError` is used when the integration response is 500
+            serverError: |-
+              { "message": "there was an error handling your request" }
+    - sqs:
         path: /functionless
         method: post
         queueName: !GetAtt SqsQueueFunctionless.QueueName
@@ -99,6 +124,13 @@ resources:
         MessageRetentionPeriod: 60
     
     SqsQueueFunctionless:
+      Type: AWS::SQS::Queue
+      DeletionPolicy: Delete
+      UpdateReplacePolicy: Delete
+      Properties:
+        MessageRetentionPeriod: 60
+    
+    SqsQueueFunctionlessUrlencoded:
       Type: AWS::SQS::Queue
       DeletionPolicy: Delete
       UpdateReplacePolicy: Delete
