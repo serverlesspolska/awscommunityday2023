@@ -1,0 +1,13 @@
+deployment:
+  profile: # references you profiles set in ~/.aws/credentials
+    dev: default
+    test: default
+    prod: default
+  region:
+    dev: eu-north-1
+    test: eu-north-1
+    prod: eu-north-1
+  globalStages: # need for per-developer stages
+    dev: dev
+    test: test
+    prod: prod

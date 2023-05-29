@@ -1,0 +1,75 @@
+service: APIGatewayToSqs
+
+frameworkVersion: '>=3.19.0'
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-export-env
+
+provider:
+  name: aws
+  stage: ${opt:stage, file(./config/stage.js):userStage}
+  runtime: nodejs16.x
+  profile: ${self:custom.deployment.profile.${self:custom.globalStage}}
+  region: ${self:custom.deployment.region.${self:custom.globalStage}}
+  logRetentionInDays: 60 # how long logs are kept in CloudWatch
+  environment:
+    # required Environment Variables. Don't remove.
+    stage: ${self:provider.stage}
+    region: ${self:provider.region}
+    service: ${self:service}
+    # your variables - optional
+    httpApiGatewayEndpointId: !Ref HttpApi
+  tags:
+    Application: ${self:service}
+    Stage: ${self:provider.stage}
+
+configValidationMode: warn
+
+custom:
+  deployment: ${file(config/deployment.yml):deployment}
+  globalStage: ${self:custom.deployment.globalStages.${self:provider.stage}, 'dev'}
+  description: Simple Lambda that send message to SQS
+  tableName: ${self:service}-${self:provider.stage}
+  export-env: # serverless-export-env config
+    filename: .awsenv # custom filename to avoid conflict with Serverless Framework '.env' auto loading feature
+    overwrite: true
+
+functions:
+  message:
+    handler: src/message/function.handler
+    description: Send message to SQS
+    memorySize: 512
+    timeout: 1
+    environment:
+      queueUrl: !Ref SqsQueue
+    events:
+      - httpApi:
+          method: POST
+          path: /message
+    iamRoleStatements:
+      - Sid: SendMessage
+        Effect: Allow
+        Action:
+          - sqs:SendMessage
+        Resource:
+          - !GetAtt SqsQueue.Arn
+
+package:
+  patterns:
+    # include
+    - src/**
+    # exclude
+    - '!*'
+    - '!__tests__/**'
+    - '!documentation/**'
+    - '!config/**'
+
+resources:
+  Description: ${self:custom.description}
+
+  Resources:
+    SqsQueue:
+      Type: AWS::SQS::Queue
+      DeletionPolicy: Delete
+      UpdateReplacePolicy: Delete
