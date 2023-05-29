@@ -45,6 +45,17 @@ custom:
         method: post
         queueName: !GetAtt SqsQueueFunctionless.QueueName
         cors: true
+        response:
+          template:
+            # `success` is used when the integration response is 200
+            success: |-
+              { "message": "accepted" }
+            # `clientError` is used when the integration response is 400
+            clientError: |-
+              { "message": "there is an error in your request" }
+            # `serverError` is used when the integration response is 500
+            serverError: |-
+              { "message": "there was an error handling your request" }
 
 functions:
   message:
@@ -114,3 +125,29 @@ resources:
         Path: "/"
         ManagedPolicyArns:
           - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+
+
+
+    ## https://github.com/serverless-operations/serverless-apigateway-service-proxy/issues/125#issuecomment-792358521
+    ApiGatewayRestMethodModel:
+      Type: AWS::ApiGateway::Model
+      Properties:
+        ContentType: application/json
+        Description: "Intake Request Model"
+        RestApiId: { Ref: 'ApiGatewayRestApi' }
+        Schema: ${file(src/schema.json)}
+    ApiGatewayRequestValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: IntakeValidator
+        RestApiId: { Ref: 'ApiGatewayRestApi' }
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    
+    ## This updates the APIGateway Resource/Method that is defined above (POST /functionless)
+    ApiGatewayMethodFunctionlessPost:
+      Type: AWS::ApiGateway::Method
+      Properties:
+        RequestModels:
+          application/json: { Ref: 'ApiGatewayRestMethodModel' }
+        RequestValidatorId: { Ref: 'ApiGatewayRequestValidator' }
