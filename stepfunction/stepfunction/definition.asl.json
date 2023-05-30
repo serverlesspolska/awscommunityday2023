@@ -1,0 +1,272 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "ChoiceDeregisterTargetsAvailable",
+  "TimeoutSeconds": 1200,
+  "States": {
+    "ChoiceDeregisterTargetsAvailable": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.targets",
+          "IsPresent": true,
+          "Next": "DeregisterTargets"
+        }
+      ],
+      "Default": "DescribeServices"
+    },
+    "DescribeServices": {
+      "Type": "Task",
+      "Next": "Is there less healthy tasks already running than we need",
+      "Parameters": {
+        "Services.$": "States.Array($.service)",
+        "Cluster.$": "$.cluster"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
+      "ResultSelector": {
+        "cluster.$": "$.Services[0].ClusterArn",
+        "service.$": "$.Services[0].ServiceName",
+        "desiredCount.$": "$.Services[0].DesiredCount",
+        "runningCount.$": "$.Services[0].RunningCount"
+      },
+      "ResultPath": "$.result"
+    },
+    "Is there less healthy tasks already running than we need": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.result.runningCount",
+          "NumericLessThanEqualsPath": "$.desiredCount",
+          "Next": "UpdateService - change the number of tasks"
+        }
+      ],
+      "Default": "Pass"
+    },
+    "DeregisterTargets": {
+      "Type": "Task",
+      "Next": "Wait 6 mins",
+      "Parameters": {
+        "TargetGroupArn.$": "$.targetGroupArn",
+        "Targets.$": "$.targets"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:elasticloadbalancingv2:deregisterTargets",
+      "ResultPath": null,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "BackoffRate": 4,
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2
+        }
+      ]
+    },
+    "Wait 6 mins": {
+      "Type": "Wait",
+      "Seconds": 360,
+      "Next": "Wait 10 s"
+    },
+    "Wait 10 s": {
+      "Type": "Wait",
+      "Seconds": 10,
+      "Next": "DescribeTargetHealth - check amount of available targets"
+    },
+    "DescribeTargetHealth - check amount of available targets": {
+      "Type": "Task",
+      "Next": "Targets already deregistered",
+      "Parameters": {
+        "TargetGroupArn.$": "$.targetGroupArn"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:elasticloadbalancingv2:describeTargetHealth",
+      "ResultPath": "$.health",
+      "ResultSelector": {
+        "targets.$": "States.ArrayLength($.TargetHealthDescriptions)"
+      }
+    },
+    "Targets already deregistered": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.health.targets",
+              "NumericLessThanEqualsPath": "$.desiredCount"
+            }
+          ],
+          "Next": "ChoiceStopTasks Available"
+        }
+      ],
+      "Default": "Wait 10 s"
+    },
+    "ChoiceStopTasks Available": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.tasks",
+          "IsPresent": true,
+          "Next": "For every task to stop"
+        }
+      ],
+      "Default": "UpdateService - change the number of tasks"
+    },
+    "For every task to stop": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "StopTask",
+        "States": {
+          "StopTask": {
+            "Type": "Task",
+            "Parameters": {
+              "Task.$": "$.task",
+              "Cluster.$": "$.cluster"
+            },
+            "Resource": "arn:aws:states:::aws-sdk:ecs:stopTask",
+            "ResultPath": "$.stoppedTasks",
+            "Next": "Task stopped",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "BackoffRate": 3,
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3
+              }
+            ]
+          },
+          "Task stopped": {
+            "Type": "Pass",
+            "End": true
+          }
+        }
+      },
+      "Next": "UpdateService - change the number of tasks",
+      "ItemsPath": "$.tasks",
+      "ItemSelector": {
+        "cluster.$": "$$.Execution.Input.cluster",
+        "task.$": "$$.Map.Item.Value"
+      },
+      "ResultPath": null
+    },
+    "UpdateService - change the number of tasks": {
+      "Type": "Task",
+      "Parameters": {
+        "Cluster.$": "$.cluster",
+        "DesiredCount.$": "$.desiredCount",
+        "ForceNewDeployment": false,
+        "Service.$": "$.service"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:ecs:updateService",
+      "Next": "Wait for health targets - 4 mins",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "BackoffRate": 3,
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "Comment": "Retry 3 times"
+        }
+      ],
+      "ResultSelector": {
+        "clusterArn.$": "$.Service.ClusterArn",
+        "service.$": "$.Service.ServiceName",
+        "desiredCount.$": "$.Service.DesiredCount"
+      }
+    },
+    "DescribeTargetHealth": {
+      "Type": "Task",
+      "Next": "Get number of tasks",
+      "Parameters": {
+        "TargetGroupArn.$": "$$.Execution.Input.targetGroupArn"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:elasticloadbalancingv2:describeTargetHealth",
+      "ResultPath": "$.targets"
+    },
+    "Get number of tasks": {
+      "Type": "Pass",
+      "Next": "Not correct number of tasks",
+      "Parameters": {
+        "TargetHealthDescriptions.$": "$.targets.TargetHealthDescriptions",
+        "numberOfTasks.$": "States.ArrayLength($.targets.TargetHealthDescriptions)",
+        "desiredCount.$": "$$.Execution.Input.desiredCount"
+      }
+    },
+    "Not correct number of tasks": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Not": {
+            "Variable": "$.numberOfTasks",
+            "NumericEqualsPath": "$.desiredCount"
+          },
+          "Next": "DescribeTargetHealth"
+        }
+      ],
+      "Default": "Map"
+    },
+    "Map": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "Get task state",
+        "States": {
+          "Get task state": {
+            "Type": "Pass",
+            "Parameters": {
+              "status.$": "$.TargetHealth.State"
+            },
+            "Next": "Check if healthy"
+          },
+          "Check if healthy": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Not": {
+                  "Variable": "$.status",
+                  "StringEquals": "healthy"
+                },
+                "Next": "Fail - not healthy"
+              }
+            ],
+            "Default": "Healthy"
+          },
+          "Fail - not healthy": {
+            "Type": "Fail"
+          },
+          "Healthy": {
+            "Type": "Pass",
+            "End": true
+          }
+        }
+      },
+      "Next": "Pass",
+      "ItemsPath": "$.TargetHealthDescriptions",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed",
+            "States.NoChoiceMatched"
+          ],
+          "Comment": "Task not healthy",
+          "Next": "DescribeTargetHealth"
+        }
+      ]
+    },
+    "Wait for health targets - 4 mins": {
+      "Type": "Wait",
+      "Seconds": 240,
+      "Next": "DescribeTargetHealth"
+    },
+    "Pass": {
+      "Type": "Pass",
+      "End": true
+    }
+  }
+}

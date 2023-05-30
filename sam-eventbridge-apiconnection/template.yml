@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Globals:
+  Function:
+    Timeout: 5
+
+Resources:
+
+#####################
+### API - Destination
+#####################
+  APIFunction:
+    Type: AWS::Serverless::Function 
+    Properties:
+      CodeUri: consumer/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Events:
+        EventRule:
+          Type: Api 
+          Properties:
+            Path: /
+            Method: post
+
+#####################
+### EventBridge
+#####################
+
+  EventRuleApiConnectionRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - events.amazonaws.com
+          Action:
+          - 'sts:AssumeRole'
+      Policies: 
+        - PolicyName: !Sub '${AWS::StackName}-EventRuleApiConnectionPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                - events:InvokeApiDestination
+                Resource:
+                - !GetAtt EventRuleApiDestination.Arn
+
+
+  S3EventRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Targets:
+        - Arn: !GetAtt EventRuleApiDestination.Arn
+          Id: api
+          RoleArn: !GetAtt EventRuleApiConnectionRole.Arn
+          InputTransformer:
+              InputPathsMap: 
+                BucketName: "$.detail.requestParameters.bucketName"
+                User: "$.detail.userIdentity.principalId"
+                EventName: "$.detail.eventName"
+              InputTemplate: | 
+                {
+                  "bucketName": <BucketName>, 
+                  "Principal": <User>, 
+                  "Event": <EventName>
+                }
+      EventPattern: {"source": ["aws.s3"],"detail-type": ["AWS API Call via CloudTrail"],"detail": {"eventSource": ["s3.amazonaws.com"],"eventName": ["CreateBucket", "PutBucketAcl", "PutBucketPolicy"]}}
+  
+  CustomEventRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Targets:
+        - Arn: !GetAtt EventRuleApiDestination.Arn
+          Id: api
+          RoleArn: !GetAtt EventRuleApiConnectionRole.Arn
+      EventPattern: {"source": ["cloud.malak.app"], "detail-type": ["appliczation-data"]}
+
+  EventRuleConnection:
+    Type: AWS::Events::Connection
+    Properties: 
+      AuthorizationType: BASIC 
+      AuthParameters: 
+        BasicAuthParameters:
+          Password: xxxxx
+          Username: xxxxx
+
+  EventRuleApiDestination:
+    Type: AWS::Events::ApiDestination
+    Properties: 
+      ConnectionArn: !GetAtt EventRuleConnection.Arn
+      HttpMethod: POST
+      InvocationEndpoint: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+      InvocationRateLimitPerSecond: 10
+
+
+

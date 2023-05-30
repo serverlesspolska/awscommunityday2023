@@ -1,0 +1,6 @@
+[{
+  "Source": "cloud.malak.app",
+  "DetailType": "appliczation-data",
+  "Detail" : "{\"app\": \"app1\",\"data\": \"Tu jakieś dane z aplikacji\"}"
+}
+]
